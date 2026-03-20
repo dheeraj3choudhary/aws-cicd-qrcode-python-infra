@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  qrcode-networking — VPC, public subnet, internet gateway, route table,
+  and security group for the QR Code Generator project.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    Description: CIDR block for the VPC.
+
+  PublicSubnetCidr:
+    Type: String
+    Default: "10.0.1.0/24"
+    Description: CIDR block for the public subnet.
+
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-west-2a
+    Description: AZ for the public subnet.
+
+  AppPort:
+    Type: Number
+    Default: 5000
+    Description: Port the QR Code app container listens on.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. VPC
+  # -------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: qrcode-vpc
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 2. Internet Gateway
+  # -------------------------------------------------------------------------
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: qrcode-igw
+        - Key: Project
+          Value: qrcode-python
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # -------------------------------------------------------------------------
+  # 3. Public Subnet
+  # -------------------------------------------------------------------------
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetCidr
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: qrcode-public-subnet
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 4. Route Table
+  # -------------------------------------------------------------------------
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: qrcode-public-rt
+        - Key: Project
+          Value: qrcode-python
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # -------------------------------------------------------------------------
+  # 5. Security Group
+  # -------------------------------------------------------------------------
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: qrcode-app-sg
+      GroupDescription: Security group for the QR Code Generator EC2 instance.
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # HTTP access to the app
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          CidrIp: "0.0.0.0/0"
+          Description: Allow inbound traffic to the QR Code app
+        # HTTP port 80 — optional redirect or health check
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          Description: Allow HTTP on port 80
+      SecurityGroupEgress:
+        # Allow all outbound (ECR pulls, SSM, CloudWatch)
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: qrcode-app-sg
+        - Key: Project
+          Value: qrcode-python
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  VpcId:
+    Description: VPC ID.
+    Value: !Ref VPC
+    Export:
+      Name: qrcode-vpc-id
+
+  PublicSubnetId:
+    Description: Public subnet ID.
+    Value: !Ref PublicSubnet
+    Export:
+      Name: qrcode-public-subnet-id
+
+  AppSecurityGroupId:
+    Description: Security group ID for the EC2 instance.
+    Value: !GetAtt AppSecurityGroup.GroupId
+    Export:
+      Name: qrcode-app-sg-id
+
+  VpcCidrBlock:
+    Description: VPC CIDR block.
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: qrcode-vpc-cidr

@@ -1,5 +1,5 @@
 # =============================================================================
-# aws-cicd-qrcode-python-app — .gitignore
+# aws-cicd-qrcode-python-infra — .gitignore
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -27,90 +27,80 @@ Desktop.ini
 .settings/
 
 # -----------------------------------------------------------------------------
-# AWS credentials — never commit these
+# AWS CLI & credentials — never commit these
 # -----------------------------------------------------------------------------
 .aws/
+aws-exports.js
 *.pem
 *.key
 credentials
+config
 
 # -----------------------------------------------------------------------------
-# Python
+# CloudFormation
+# -----------------------------------------------------------------------------
+# Packaged / transformed templates (output of `aws cloudformation package`)
+*.packaged.yml
+*.packaged.yaml
+packaged-*.yml
+packaged-*.yaml
+
+# SAM build artifacts (if ever used alongside CFN)
+.aws-sam/
+
+# CDK (not used here, but guard against accidental init)
+cdk.out/
+cdk.context.json
+
+# cfn-lint cache
+.cfnlintrc.cache
+.cfnlintrc
+
+# taskcat output
+.taskcat_outputs/
+.taskcat.yml
+
+# -----------------------------------------------------------------------------
+# Linting / validation artefacts
+# -----------------------------------------------------------------------------
+.cfn-guard/
+cfn-guard-output/
+
+# -----------------------------------------------------------------------------
+# Shell script artefacts
+# -----------------------------------------------------------------------------
+*.log
+teardown.log
+
+# -----------------------------------------------------------------------------
+# Terraform (guard against accidental init in wrong repo)
+# -----------------------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfplan
+
+# -----------------------------------------------------------------------------
+# Python (bootstrap helper scripts, if any)
 # -----------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
 .Python
-
-# Virtual environments
 env/
 venv/
 .venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Distribution / packaging
-.eggs/
 *.egg-info/
-*.egg
 dist/
 build/
-wheels/
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-.pytest_cache/
-htmlcov/
-*.cover
-coverage.xml
-nosetests.xml
-test-results/
-junit*.xml
-
-# mypy / type checking
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-
-# pyenv
-.python-version
-
-# Jupyter
-.ipynb_checkpoints/
 
 # -----------------------------------------------------------------------------
-# Docker
+# Node (guard against accidental npm init)
 # -----------------------------------------------------------------------------
-# Never commit generated image tarballs or layer caches
-*.tar
-docker-compose.override.yml
-
-# -----------------------------------------------------------------------------
-# QR Code output artefacts (generated at runtime, not source)
-# -----------------------------------------------------------------------------
-*.png
-*.svg
-qrcodes/
-output/
-generated/
-
-# -----------------------------------------------------------------------------
-# CodeDeploy / CodeBuild local output
-# -----------------------------------------------------------------------------
-appspec-local/
-deployment-archive/
-*.zip
+node_modules/
+npm-debug.log*
+yarn-error.log*
 
 # -----------------------------------------------------------------------------
 # Secrets & environment files
@@ -121,15 +111,3 @@ deployment-archive/
 *.secret
 secrets.yml
 secrets.yaml
-
-# -----------------------------------------------------------------------------
-# Logs
-# -----------------------------------------------------------------------------
-*.log
-logs/
-
-# -----------------------------------------------------------------------------
-# Node (guard against accidental npm init)
-# -----------------------------------------------------------------------------
-node_modules/
-npm-debug.log*

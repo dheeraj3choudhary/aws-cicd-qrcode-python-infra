@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  qrcode-monitoring — CloudWatch log group, EC2 alarms, and dashboard
+  for the QR Code Generator project.
+  Depends on: 03-compute.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  CPUAlarmThreshold:
+    Type: Number
+    Default: 80
+    Description: CPU utilisation % that triggers the high-CPU alarm.
+
+  StatusCheckAlarmPeriod:
+    Type: Number
+    Default: 60
+    Description: Period in seconds for the EC2 status check alarm.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. CloudWatch Log Groups
+  # -------------------------------------------------------------------------
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /qrcode/app
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  CodeDeployLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /qrcode/codedeploy
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 2. CloudWatch Alarms
+  # -------------------------------------------------------------------------
+  CPUHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: qrcode-ec2-cpu-high
+      AlarmDescription: EC2 CPU utilisation is above threshold.
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: InstanceId
+          Value: !ImportValue qrcode-ec2-instance-id
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref CPUAlarmThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  StatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: qrcode-ec2-status-check-failed
+      AlarmDescription: EC2 instance status check has failed.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !ImportValue qrcode-ec2-instance-id
+      Statistic: Maximum
+      Period: !Ref StatusCheckAlarmPeriod
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  # -------------------------------------------------------------------------
+  # 3. CloudWatch Dashboard
+  # -------------------------------------------------------------------------
+  AppDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: qrcode-app-dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "EC2 CPU Utilisation",
+                "metrics": [
+                  [ "AWS/EC2", "CPUUtilization", "InstanceId", "${!ImportValue qrcode-ec2-instance-id}" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "view": "timeSeries",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "EC2 Network In/Out",
+                "metrics": [
+                  [ "AWS/EC2", "NetworkIn",  "InstanceId", "${!ImportValue qrcode-ec2-instance-id}" ],
+                  [ "AWS/EC2", "NetworkOut", "InstanceId", "${!ImportValue qrcode-ec2-instance-id}" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "view": "timeSeries",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "EC2 Status Check Failed",
+                "metrics": [
+                  [ "AWS/EC2", "StatusCheckFailed", "InstanceId", "${!ImportValue qrcode-ec2-instance-id}" ]
+                ],
+                "period": 60,
+                "stat": "Maximum",
+                "view": "timeSeries",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "App Logs",
+                "query": "SOURCE '/qrcode/app' | fields @timestamp, @message | sort @timestamp desc | limit 50",
+                "region": "${AWS::Region}",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  AppLogGroupName:
+    Description: CloudWatch log group for the QR Code app.
+    Value: !Ref AppLogGroup
+    Export:
+      Name: qrcode-app-log-group
+
+  CodeDeployLogGroupName:
+    Description: CloudWatch log group for CodeDeploy events.
+    Value: !Ref CodeDeployLogGroup
+    Export:
+      Name: qrcode-codedeploy-log-group
+
+  DashboardUrl:
+    Description: URL for the CloudWatch dashboard.
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=qrcode-app-dashboard"
+    Export:
+      Name: qrcode-dashboard-url

@@ -1,0 +1,70 @@
+version: 0.2
+
+env:
+  variables:
+    CFN_DIR: "infra/cfn"
+    CFN_LINT_VERSION: "0.87.3"
+
+phases:
+
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "=== Installing cfn-lint ==="
+      - pip install "cfn-lint==${CFN_LINT_VERSION}"
+      - cfn-lint --version
+
+  pre_build:
+    commands:
+      - echo "=== Environment ==="
+      - echo "AWS Region     $AWS_DEFAULT_REGION"
+      - echo "AWS Account    $AWS_ACCOUNT_ID"
+      - echo "Build ID       $CODEBUILD_BUILD_ID"
+      - echo "Source Version $CODEBUILD_RESOLVED_SOURCE_VERSION"
+      - echo "=== Templates to validate ==="
+      - find ${CFN_DIR} -name "*.yml" | sort
+
+  build:
+    commands:
+      - echo "=== Phase 1 - cfn-lint ==="
+      - |
+        LINT_FAILED=0
+        for template in $(find ${CFN_DIR} -name "*.yml" | sort); do
+          echo "Linting: ${template}"
+          cfn-lint "${template}" --include-checks W --format parseable || LINT_FAILED=1
+        done
+        if [ "${LINT_FAILED}" -eq 1 ]; then
+          echo "ERROR: cfn-lint found issues. Failing build."
+          exit 1
+        fi
+        echo "cfn-lint passed for all templates."
+      - echo "=== Phase 2 - aws cloudformation validate-template ==="
+      - |
+        VALIDATE_FAILED=0
+        for template in $(find ${CFN_DIR} -name "*.yml" | sort); do
+          echo "Validating: ${template}"
+          aws cloudformation validate-template \
+            --template-body file://${template} \
+            --region ${AWS_DEFAULT_REGION} \
+            > /dev/null || VALIDATE_FAILED=1
+        done
+        if [ "${VALIDATE_FAILED}" -eq 1 ]; then
+          echo "ERROR: cloudformation validate-template failed. Failing build."
+          exit 1
+        fi
+        echo "cloudformation validate-template passed for all templates."
+
+  post_build:
+    commands:
+      - |
+        if [ "${CODEBUILD_BUILD_SUCCEEDING}" -eq 1 ]; then
+          echo "=== All CFN templates passed lint and validation. ==="
+        else
+          echo "=== Validation stage FAILED. Check logs above. ==="
+        fi
+
+artifacts:
+  files:
+    - "**/*"
+  base-directory: "."

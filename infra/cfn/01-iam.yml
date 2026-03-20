@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  qrcode-iam — IAM roles and instance profile for the QR Code Generator project.
+  Creates:
+    - EC2 instance role + instance profile (ECR pull, S3, SSM, CloudWatch, CodeDeploy)
+    - CodeDeploy service role
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. EC2 Instance Role
+  # -------------------------------------------------------------------------
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-ec2-instance-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # SSM Session Manager — no bastion needed
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        # CloudWatch agent
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: QRCodeEC2Permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ECR — pull Docker images
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+              # S3 — read deployment artifacts bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::qrcode-app-artifacts-${AWS::AccountId}-${AWS::Region}"
+                  - !Sub "arn:aws:s3:::qrcode-app-artifacts-${AWS::AccountId}-${AWS::Region}/*"
+              # SSM — read app parameters
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/qrcode/*"
+              # CloudWatch Logs — app container logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 2. EC2 Instance Profile
+  # -------------------------------------------------------------------------
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: qrcode-ec2-instance-profile
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # -------------------------------------------------------------------------
+  # 3. CodeDeploy Service Role
+  # -------------------------------------------------------------------------
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-codedeploy-service-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  EC2InstanceRoleArn:
+    Description: ARN of the EC2 instance role.
+    Value: !GetAtt EC2InstanceRole.Arn
+    Export:
+      Name: qrcode-ec2-instance-role-arn
+
+  EC2InstanceProfileArn:
+    Description: ARN of the EC2 instance profile.
+    Value: !GetAtt EC2InstanceProfile.Arn
+    Export:
+      Name: qrcode-ec2-instance-profile-arn
+
+  EC2InstanceProfileName:
+    Description: Name of the EC2 instance profile.
+    Value: !Ref EC2InstanceProfile
+    Export:
+      Name: qrcode-ec2-instance-profile-name
+
+  CodeDeployServiceRoleArn:
+    Description: ARN of the CodeDeploy service role.
+    Value: !GetAtt CodeDeployServiceRole.Arn
+    Export:
+      Name: qrcode-codedeploy-service-role-arn

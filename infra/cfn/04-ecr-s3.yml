@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  qrcode-ecr-s3 — ECR repository, deployment S3 bucket, and SSM parameters
+  for the QR Code Generator project.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. ECR Repository
+  # -------------------------------------------------------------------------
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: qrcode-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 2. Deployment S3 Bucket  (stores CodeDeploy revision bundles)
+  # -------------------------------------------------------------------------
+  DeploymentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "qrcode-deployments-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldRevisions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 3. SSM Parameters — consumed by CodeBuild and EC2 user data
+  # -------------------------------------------------------------------------
+  SSMParamECRRepoUri:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /qrcode/ecr/repo-uri
+      Type: String
+      Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/qrcode-app"
+      Description: ECR repository URI for the QR Code app Docker image.
+      Tags:
+        Project: qrcode-python
+
+  SSMParamECRRepoName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /qrcode/ecr/repo-name
+      Type: String
+      Value: qrcode-app
+      Description: ECR repository name for the QR Code app.
+      Tags:
+        Project: qrcode-python
+
+  SSMParamDeploymentBucket:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /qrcode/s3/deployment-bucket
+      Type: String
+      Value: !Ref DeploymentBucket
+      Description: S3 bucket name for CodeDeploy revision bundles.
+      Tags:
+        Project: qrcode-python
+
+  SSMParamAwsRegion:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /qrcode/aws/region
+      Type: String
+      Value: !Ref AWS::Region
+      Description: AWS region for the QR Code project.
+      Tags:
+        Project: qrcode-python
+
+  SSMParamAwsAccountId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /qrcode/aws/account-id
+      Type: String
+      Value: !Ref AWS::AccountId
+      Description: AWS account ID for the QR Code project.
+      Tags:
+        Project: qrcode-python
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  ECRRepositoryUri:
+    Description: Full URI of the ECR repository.
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/qrcode-app"
+    Export:
+      Name: qrcode-ecr-repo-uri
+
+  ECRRepositoryArn:
+    Description: ARN of the ECR repository.
+    Value: !GetAtt ECRRepository.Arn
+    Export:
+      Name: qrcode-ecr-repo-arn
+
+  ECRRepositoryName:
+    Description: Name of the ECR repository.
+    Value: !Ref ECRRepository
+    Export:
+      Name: qrcode-ecr-repo-name
+
+  DeploymentBucketName:
+    Description: Name of the deployment S3 bucket.
+    Value: !Ref DeploymentBucket
+    Export:
+      Name: qrcode-deployment-bucket-name
+
+  DeploymentBucketArn:
+    Description: ARN of the deployment S3 bucket.
+    Value: !GetAtt DeploymentBucket.Arn
+    Export:
+      Name: qrcode-deployment-bucket-arn

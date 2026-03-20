@@ -1,212 +1,205 @@
-# aws-cicd-qrcode-python-app
+# aws-cicd-qrcode-python-infra
 
-![App Pipeline](https://img.shields.io/badge/pipeline-app-blue?style=flat-square&logo=amazonaws)
-![Python](https://img.shields.io/badge/python-3.12-yellow?style=flat-square&logo=python)
-![Flask](https://img.shields.io/badge/flask-3.1-lightgrey?style=flat-square&logo=flask)
-![Docker](https://img.shields.io/badge/docker-multi--stage-2496ED?style=flat-square&logo=docker)
-![Deploy](https://img.shields.io/badge/deploy-CodeDeploy-orange?style=flat-square&logo=amazonaws)
+![Infra Pipeline](https://img.shields.io/badge/pipeline-infra-blue?style=flat-square&logo=amazonaws)
+![IaC](https://img.shields.io/badge/IaC-CloudFormation-orange?style=flat-square&logo=amazonaws)
+![Lint](https://img.shields.io/badge/lint-cfn--lint-green?style=flat-square)
+![Deploy Target](https://img.shields.io/badge/deploy-EC2-yellow?style=flat-square&logo=amazonaws)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-Python QR Code Generator application — Flask API + dark themed frontend, Dockerised and deployed to EC2 via AWS CodeDeploy.
+Infrastructure-as-code repository for the **QR Code Generator** project. Contains the bootstrap CloudFormation template, all infrastructure stacks, and the teardown script.
 
 ---
 
 ## Repository Structure
 
 ```
-aws-cicd-qrcode-python-app/
-├── app.py                        # Flask app — /, /health, /generate endpoints
-├── requirements.txt              # Pinned dependencies
-├── Dockerfile                    # Multi-stage build (builder + runtime, non-root)
-├── buildspec-test.yml            # CodeBuild stage 1 — install + pytest
-├── buildspec-docker.yml          # CodeBuild stage 2 — docker build + ECR push
-├── appspec.yml                   # CodeDeploy lifecycle hook mapping
-├── public/
-│   └── index.html                # Dark themed frontend UI
-├── tests/
-│   └── test_app.py               # 16 pytest unit tests
-├── scripts/
-│   ├── before_install.sh         # Stop + remove existing container
-│   ├── after_install.sh          # IMDSv2 region lookup, ECR login, docker pull
-│   ├── application_start.sh      # docker run with restart policy
-│   └── validate_service.sh       # /health curl with 10 retries
+aws-cicd-qrcode-python-infra/
+├── bootstrap/
+│   └── pipeline.yml          # Deploy once from console — creates both repos + both pipelines
+├── infra/
+│   ├── buildspec-validate.yml # CodeBuild: cfn-lint + cloudformation validate-template
+│   └── cfn/
+│       ├── 01-iam.yml         # EC2 instance role, instance profile, CodeDeploy service role
+│       ├── 02-networking.yml  # VPC, public subnet, IGW, route table, security group
+│       ├── 03-compute.yml     # EC2 instance, Elastic IP, CodeDeploy app + deployment group
+│       ├── 04-ecr-s3.yml      # ECR repo, deployment S3 bucket, SSM parameters
+│       └── 05-monitoring.yml  # CloudWatch log groups, alarms, dashboard
+├── teardown.sh                # Full environment teardown in reverse order
 ├── .gitignore
 └── README.md
 ```
 
 ---
 
-## App Pipeline
+## Architecture Overview
 
 ```
-CodeCommit push to main
-        │
-        ▼
-┌───────────────┐
-│    Source     │  Pulls from aws-cicd-qrcode-python-app @ main
-└───────┬───────┘
-        │
-        ▼
-┌───────────────┐
-│ Build & Test  │  buildspec-test.yml
-│               │  - pip install -r requirements.txt
-│               │  - PYTHONPATH=. pytest tests/ --cov --junitxml
-└───────┬───────┘
-        │
-        ▼
-┌───────────────┐
-│ Docker & Push │  buildspec-docker.yml
-│               │  - Read ECR URI from SSM /qrcode/ecr/repo-uri
-│               │  - docker build (ECR Public base image)
-│               │  - docker push :latest to ECR
-└───────┬───────┘
-        │
-        ▼
-┌───────────────┐
-│    Deploy     │  CodeDeploy — appspec.yml
-│               │  BeforeInstall  → before_install.sh
-│               │  AfterInstall   → after_install.sh
-│               │  ApplicationStart → application_start.sh
-│               │  ValidateService  → validate_service.sh
-└───────────────┘
-```
-
----
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | Serves the frontend UI |
-| `GET` | `/health` | Health check — returns `{"status":"healthy"}` |
-| `POST` | `/generate` | Generate a QR code — returns PNG binary |
-
-### POST /generate
-
-**Request body (JSON):**
-
-```json
-{
-  "data": "https://example.com",
-  "size": 10,
-  "border": 4
-}
-```
-
-| Field | Type | Required | Default | Constraints |
-|-------|------|----------|---------|-------------|
-| `data` | string | yes | — | Non-empty |
-| `size` | integer | no | `10` | 1–50 |
-| `border` | integer | no | `4` | 0–20 |
-
-**Response:** `image/png` binary
-
-**Example:**
-
-```bash
-curl -X POST http://<EC2_IP>:5000/generate \
-  -H "Content-Type: application/json" \
-  -d '{"data": "https://example.com"}' \
-  --output qrcode.png
+                          ┌─────────────────────────────────────────────┐
+                          │              Bootstrap Stack                 │
+                          │  (deployed once manually from AWS Console)   │
+                          │                                              │
+                          │  - CodeCommit: infra repo + app repo         │
+                          │  - S3: infra artifact bucket                 │
+                          │  - S3: app artifact bucket                   │
+                          │  - IAM: pipeline + build + CFN deploy roles  │
+                          │  - CodeBuild: validate + test + docker       │
+                          │  - CodePipeline: infra pipeline              │
+                          │  - CodePipeline: app pipeline                │
+                          │  - EventBridge: commit triggers              │
+                          └───────────────┬─────────────────────────────┘
+                                          │ push to main
+                                          ▼
+                          ┌──────────────────────────────┐
+                          │       Infra Pipeline          │
+                          │                              │
+                          │  Source (CodeCommit)         │
+                          │    ↓                         │
+                          │  Validate (cfn-lint + API)   │
+                          │    ↓                         │
+                          │  Deploy (all stacks)         │
+                          │    RunOrder 1: 01-iam        │
+                          │    RunOrder 2: 02-networking  │
+                          │    RunOrder 3: 04-ecr-s3     │
+                          │    RunOrder 4: 03-compute    │
+                          │    RunOrder 5: 05-monitoring │
+                          └──────────────────────────────┘
 ```
 
 ---
 
-## Running Locally
+## Stacks
+
+| Order | Stack Name | Template | Description |
+|-------|------------|----------|-------------|
+| 1 | `qrcode-iam` | `01-iam.yml` | EC2 instance role, instance profile, CodeDeploy service role |
+| 2 | `qrcode-networking` | `02-networking.yml` | VPC `10.0.0.0/16`, public subnet, IGW, SG (ports 80 + 5000) |
+| 3 | `qrcode-ecr-s3` | `04-ecr-s3.yml` | ECR repo, deployment S3 bucket, 5 SSM parameters |
+| 4 | `qrcode-compute` | `03-compute.yml` | EC2 (AL2023, t3.micro), EIP, CodeDeploy app + deployment group |
+| 5 | `qrcode-monitoring` | `05-monitoring.yml` | CW log groups, CPU + status check alarms, dashboard |
+
+> `03-compute` deploys after `04-ecr-s3` because EC2 user data reads the ECR repo URI from the SSM parameter written by stack 04.
+
+---
+
+## Prerequisites
+
+- AWS CLI v2 configured with sufficient permissions
+- Git with AWS CodeCommit HTTPS credentials configured
+- `jq` installed (required by `teardown.sh`)
+
+---
+
+## First-Time Setup
+
+### 1. Deploy the Bootstrap Stack
+
+Go to **AWS Console → CloudFormation → Create Stack** and upload `bootstrap/pipeline.yml`.
+
+Use the following stack name:
+
+```
+qrcode-bootstrap
+```
+
+Accept all default parameter values or override as needed:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `AwsRegion` | `us-east-1` | AWS region for all resources |
+| `InfraRepoBranch` | `main` | Branch that triggers the infra pipeline |
+| `AppRepoBranch` | `main` | Branch that triggers the app pipeline |
+| `CodeBuildComputeType` | `BUILD_GENERAL1_SMALL` | CodeBuild instance size |
+
+### 2. Clone Both Repositories
+
+After the bootstrap stack is created, get the clone URLs from the stack Outputs tab and clone:
 
 ```bash
-# Clone
+git clone https://git-codecommit.<region>.amazonaws.com/v1/repos/aws-cicd-qrcode-python-infra
 git clone https://git-codecommit.<region>.amazonaws.com/v1/repos/aws-cicd-qrcode-python-app
+```
+
+### 3. Push Infra Repo
+
+```bash
+cd aws-cicd-qrcode-python-infra
+git add .
+git commit -m "feat: initial infra"
+git push origin main
+```
+
+This push triggers the infra pipeline automatically via EventBridge. The pipeline will validate all CFN templates then deploy all 5 stacks in order.
+
+### 4. Push App Repo
+
+Once the infra pipeline completes successfully (EC2 + CodeDeploy are provisioned), push the app repo to trigger the app pipeline:
+
+```bash
 cd aws-cicd-qrcode-python-app
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run
-python app.py
+git add .
+git commit -m "feat: initial app"
+git push origin main
 ```
-
-App will be available at `http://localhost:5000`.
 
 ---
 
-## Running with Docker Locally
+## SSM Parameters Written by Stack 04
+
+| Parameter | Value |
+|-----------|-------|
+| `/qrcode/ecr/repo-uri` | `<account>.dkr.ecr.<region>.amazonaws.com/qrcode-app` |
+| `/qrcode/ecr/repo-name` | `qrcode-app` |
+| `/qrcode/s3/deployment-bucket` | `qrcode-deployments-<account>-<region>` |
+| `/qrcode/aws/region` | `<region>` |
+| `/qrcode/aws/account-id` | `<account>` |
+
+---
+
+## Stack Exports
+
+Key values exported by stacks for cross-stack reference:
+
+| Export Name | Source Stack | Description |
+|-------------|-------------|-------------|
+| `qrcode-ec2-instance-profile-name` | `qrcode-iam` | Used by `03-compute` |
+| `qrcode-codedeploy-service-role-arn` | `qrcode-iam` | Used by `03-compute` |
+| `qrcode-public-subnet-id` | `qrcode-networking` | Used by `03-compute` |
+| `qrcode-app-sg-id` | `qrcode-networking` | Used by `03-compute` |
+| `qrcode-ec2-instance-id` | `qrcode-compute` | Used by `05-monitoring` |
+| `qrcode-app-url` | `qrcode-compute` | Public URL of the app |
+
+---
+
+## Teardown
+
+To destroy the entire environment:
 
 ```bash
-# Build
-docker build -t qrcode-app .
-
-# Run
-docker run -p 5000:5000 qrcode-app
+chmod +x teardown.sh
+./teardown.sh --region us-east-1 --profile default
 ```
 
-App will be available at `http://localhost:5000`.
+The script will:
+1. Empty all S3 buckets (versioned objects + delete markers)
+2. Delete all ECR images from `qrcode-app`
+3. Delete CFN stacks in reverse order: monitoring → compute → ecr-s3 → networking → iam
+4. Delete the bootstrap stack
+5. Delete the now-empty S3 buckets
+
+> All actions are logged to `teardown.log`.
 
 ---
 
-## Running Tests
+## Making Infrastructure Changes
+
+Any push to `main` triggers the infra pipeline. The pipeline re-validates and re-deploys all stacks using `CREATE_UPDATE` — existing resources are updated in place where possible.
 
 ```bash
-pip install -r requirements.txt
-PYTHONPATH=. pytest tests/ -v --cov=app --cov-report=term-missing
+# Edit a template, then:
+git add infra/cfn/
+git commit -m "fix: update security group rules"
+git push origin main
 ```
-
-**Test coverage:**
-
-| Area | Tests |
-|------|-------|
-| Health check | 2 |
-| Index page | 2 |
-| Generate — happy path | 4 |
-| Generate — validation errors | 6 |
-| Error handlers | 2 |
-| **Total** | **16** |
-
----
-
-## Docker Image
-
-- **Base image:** `public.ecr.aws/docker/library/python:3.12-slim` (ECR Public — no rate limits)
-- **Multi-stage build:** `builder` installs deps into `/venv`, `runtime` copies only venv + source
-- **Non-root user:** runs as `appuser` (UID 1001)
-- **Health check:** built-in Docker `HEALTHCHECK` hitting `/health` every 30s
-- **Port:** `5000`
-
----
-
-## CodeDeploy Lifecycle
-
-| Hook | Script | What it does |
-|------|--------|-------------|
-| `BeforeInstall` | `before_install.sh` | Stops and removes the existing container |
-| `AfterInstall` | `after_install.sh` | IMDSv2 region lookup, ECR login, `docker pull :latest` |
-| `ApplicationStart` | `application_start.sh` | `docker run` with `--restart unless-stopped` |
-| `ValidateService` | `validate_service.sh` | 10 × 5s retries curling `/health`, dumps logs on failure |
-
----
-
-## Accessing the App
-
-After a successful deployment the app URL is available in:
-
-**CloudFormation Console → `qrcode-compute` stack → Outputs → `AppUrl`**
-
-```
-http://<ElasticIP>:5000
-```
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_PORT` | `5000` | Port the Flask app listens on |
-| `APP_HOST` | `0.0.0.0` | Host the Flask app binds to |
 
 ---
 
@@ -214,4 +207,4 @@ http://<ElasticIP>:5000
 
 | Repo | Description |
 |------|-------------|
-| [`aws-cicd-qrcode-python-infra`](https://git-codecommit.<region>.amazonaws.com/v1/repos/aws-cicd-qrcode-python-infra) | CloudFormation stacks, infra pipeline, teardown script |
+| [`aws-cicd-qrcode-python-app`](https://git-codecommit.<region>.amazonaws.com/v1/repos/aws-cicd-qrcode-python-app) | Python QR Code app, Docker, CodeDeploy scripts, app pipeline |

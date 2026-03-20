@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  qrcode-compute — EC2 instance, CodeDeploy application and deployment group
+  for the QR Code Generator project.
+  Depends on: 01-iam, 02-networking, 04-ecr-s3.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+    Description: EC2 instance type.
+
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 AMI — resolved from SSM at deploy time.
+
+  AppPort:
+    Type: Number
+    Default: 5000
+    Description: Port the QR Code app container listens on.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. EC2 Instance
+  # -------------------------------------------------------------------------
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      SubnetId: !ImportValue qrcode-public-subnet-id
+      SecurityGroupIds:
+        - !ImportValue qrcode-app-sg-id
+      IamInstanceProfile: !ImportValue qrcode-ec2-instance-profile-name
+      Tags:
+        - Key: Name
+          Value: qrcode-app-server
+        - Key: Project
+          Value: qrcode-python
+        # CodeDeploy uses this tag to identify deployment targets
+        - Key: CodeDeployGroup
+          Value: qrcode-app-dg
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # ── System update ────────────────────────────────────────────────
+          dnf update -y
+
+          # ── Install CodeDeploy agent ─────────────────────────────────────
+          dnf install -y ruby wget
+          cd /tmp
+          wget -q https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+          chmod +x ./install
+          ./install auto
+          systemctl enable codedeploy-agent
+          systemctl start codedeploy-agent
+
+          # ── Install Docker ────────────────────────────────────────────────
+          dnf install -y docker
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ec2-user
+
+          # ── Install AWS CLI v2 (pre-installed on AL2023, ensure latest) ──
+          dnf install -y aws-cli
+
+          # ── Write ECR login helper script ────────────────────────────────
+          cat > /usr/local/bin/ecr-login.sh << 'EOF'
+          #!/bin/bash
+          AWS_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          aws ecr get-login-password --region ${!AWS_REGION} \
+            | docker login --username AWS \
+              --password-stdin ${!ACCOUNT_ID}.dkr.ecr.${!AWS_REGION}.amazonaws.com
+          EOF
+          chmod +x /usr/local/bin/ecr-login.sh
+
+          echo "UserData complete."
+
+  # -------------------------------------------------------------------------
+  # 2. Elastic IP — stable public address
+  # -------------------------------------------------------------------------
+  AppEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref AppInstance
+      Tags:
+        - Key: Name
+          Value: qrcode-app-eip
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 3. CodeDeploy Application
+  # -------------------------------------------------------------------------
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: qrcode-app
+      ComputePlatform: Server
+
+  # -------------------------------------------------------------------------
+  # 4. CodeDeploy Deployment Group
+  # -------------------------------------------------------------------------
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: qrcode-app-dg
+      ServiceRoleArn: !ImportValue qrcode-codedeploy-service-role-arn
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      DeploymentStyle:
+        DeploymentType: IN_PLACE
+        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+      Ec2TagFilters:
+        - Key: CodeDeployGroup
+          Value: qrcode-app-dg
+          Type: KEY_AND_VALUE
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  InstanceId:
+    Description: EC2 instance ID.
+    Value: !Ref AppInstance
+    Export:
+      Name: qrcode-ec2-instance-id
+
+  PublicIp:
+    Description: Elastic IP address of the EC2 instance.
+    Value: !Ref AppEIP
+    Export:
+      Name: qrcode-ec2-public-ip
+
+  AppUrl:
+    Description: URL to access the QR Code Generator app.
+    Value: !Sub "http://${AppEIP}:${AppPort}"
+    Export:
+      Name: qrcode-app-url
+
+  CodeDeployApplicationName:
+    Description: CodeDeploy application name.
+    Value: !Ref CodeDeployApplication
+    Export:
+      Name: qrcode-codedeploy-app-name
+
+  CodeDeployDeploymentGroupName:
+    Description: CodeDeploy deployment group name.
+    Value: !Ref CodeDeployDeploymentGroup
+    Export:
+      Name: qrcode-codedeploy-dg-name

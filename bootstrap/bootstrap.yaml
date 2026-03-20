@@ -1,0 +1,791 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Bootstrap stack for aws-cicd-qrcode-python.
+  Creates both CodeCommit repositories, S3 artifact buckets, IAM roles,
+  and both CodePipelines (infra + app).
+  Deploy this stack ONCE from the AWS Console to get everything running.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS region for all resources.
+
+  InfraRepoName:
+    Type: String
+    Default: aws-cicd-qrcode-python-infra
+    Description: Name of the infra CodeCommit repository.
+
+  AppRepoName:
+    Type: String
+    Default: aws-cicd-qrcode-python-app
+    Description: Name of the app CodeCommit repository.
+
+  InfraRepoBranch:
+    Type: String
+    Default: main
+    Description: Branch that triggers the infra pipeline.
+
+  AppRepoBranch:
+    Type: String
+    Default: main
+    Description: Branch that triggers the app pipeline.
+
+  CodeBuildComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_SMALL
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+    Description: CodeBuild compute type for both pipelines.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # 1. CodeCommit Repositories
+  # -------------------------------------------------------------------------
+  InfraRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref InfraRepoName
+      RepositoryDescription: >
+        CloudFormation templates and infra pipeline configuration for the
+        QR Code Generator project.
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+        - Key: Component
+          Value: infra
+
+  AppRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref AppRepoName
+      RepositoryDescription: >
+        Python QR Code Generator application — Docker, CodeDeploy scripts,
+        and app pipeline configuration.
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+        - Key: Component
+          Value: app
+
+  # -------------------------------------------------------------------------
+  # 2. S3 Artifact Buckets  (versioning enabled, blocked public access)
+  # -------------------------------------------------------------------------
+  InfraArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "qrcode-infra-artifacts-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+        - Key: Component
+          Value: infra
+
+  AppArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "qrcode-app-artifacts-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+        - Key: Component
+          Value: app
+
+  # -------------------------------------------------------------------------
+  # 3. IAM — CodePipeline Service Role  (shared by both pipelines)
+  # -------------------------------------------------------------------------
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-codepipeline-service-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # CodeCommit source
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource:
+                  - !GetAtt InfraRepository.Arn
+                  - !GetAtt AppRepository.Arn
+              # S3 artifacts
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub "${InfraArtifactBucket.Arn}/*"
+                  - !Sub "${AppArtifactBucket.Arn}/*"
+                  - !GetAtt InfraArtifactBucket.Arn
+                  - !GetAtt AppArtifactBucket.Arn
+              # CodeBuild
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: "*"
+              # CloudFormation (infra pipeline)
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+              # Pass role to CloudFormation
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt CloudFormationDeployRole.Arn
+              # CodeDeploy (app pipeline)
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:RegisterApplicationRevision
+                  - codedeploy:GetApplication
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 4. IAM — CodeBuild Service Role  (shared by both build projects)
+  # -------------------------------------------------------------------------
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-codebuild-service-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              # S3 artifacts
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub "${InfraArtifactBucket.Arn}/*"
+                  - !Sub "${AppArtifactBucket.Arn}/*"
+                  - !GetAtt InfraArtifactBucket.Arn
+                  - !GetAtt AppArtifactBucket.Arn
+              # ECR — push Docker images
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+              # SSM — read parameters (e.g. ECR repo URI)
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/qrcode/*"
+              # CloudFormation validate (infra build)
+              - Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+              # CodeBuild reports
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+                Resource:
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/qrcode-*"
+              # CodeCommit read (if buildspec needs git metadata)
+              - Effect: Allow
+                Action:
+                  - codecommit:GitPull
+                Resource:
+                  - !GetAtt InfraRepository.Arn
+                  - !GetAtt AppRepository.Arn
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 5. IAM — CloudFormation Deploy Role  (used by infra pipeline CFN actions)
+  # -------------------------------------------------------------------------
+  CloudFormationDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-cloudformation-deploy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Broad permissions so CFN can provision IAM, VPC, EC2, ECR, S3 etc.
+        # Scope down after initial validation if desired.
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: AllowIAMForCFN
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:GetInstanceProfile
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 6. CodeBuild — Infra Validate Project
+  # -------------------------------------------------------------------------
+  InfraBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: qrcode-infra-validate
+      Description: Validates CloudFormation templates in the infra repo.
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref CodeBuildComputeType
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: infra/buildspec-validate.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/qrcode-infra-validate
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 8a. CodeBuild — App Build & Test Project
+  # -------------------------------------------------------------------------
+  AppTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: qrcode-app-build-test
+      Description: Installs dependencies and runs pytest for the QR Code app.
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref CodeBuildComputeType
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-test.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/qrcode-app-build-test
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 8. CodePipeline — Infra Pipeline
+  #    Stages: Source → Validate (CodeBuild) → Deploy stacks (CFN)
+  # -------------------------------------------------------------------------
+  InfraPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: qrcode-infra-pipeline
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref InfraArtifactBucket
+      Stages:
+
+        # ── Stage 1: Source ──────────────────────────────────────────────────
+        - Name: Source
+          Actions:
+            - Name: InfraSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              Configuration:
+                RepositoryName: !Ref InfraRepoName
+                BranchName: !Ref InfraRepoBranch
+                PollForSourceChanges: false   # EventBridge rule handles trigger
+              OutputArtifacts:
+                - Name: InfraSourceArtifact
+              RunOrder: 1
+
+        # ── Stage 2: Validate CFN templates ─────────────────────────────────
+        - Name: Validate
+          Actions:
+            - Name: ValidateTemplates
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref InfraBuildProject
+              InputArtifacts:
+                - Name: InfraSourceArtifact
+              OutputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 1
+
+        # ── Stage 3: Deploy — All CFN Stacks (sequenced by RunOrder) ────────────
+        - Name: Deploy
+          Actions:
+            - Name: DeployIAM
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: qrcode-iam
+                TemplatePath: "InfraValidatedArtifact::infra/cfn/01-iam.yml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 1
+
+            - Name: DeployNetworking
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: qrcode-networking
+                TemplatePath: "InfraValidatedArtifact::infra/cfn/02-networking.yml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 2
+
+            - Name: DeployECRS3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: qrcode-ecr-s3
+                TemplatePath: "InfraValidatedArtifact::infra/cfn/04-ecr-s3.yml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 3
+
+            - Name: DeployCompute
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: qrcode-compute
+                TemplatePath: "InfraValidatedArtifact::infra/cfn/03-compute.yml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 4
+
+            - Name: DeployMonitoring
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: qrcode-monitoring
+                TemplatePath: "InfraValidatedArtifact::infra/cfn/05-monitoring.yml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: InfraValidatedArtifact
+              RunOrder: 5
+
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 8b. CodeBuild — App Docker & Push Project
+  # -------------------------------------------------------------------------
+  AppDockerProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: qrcode-app-docker-push
+      Description: Builds Docker image and pushes to ECR for the QR Code app.
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref CodeBuildComputeType
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true          # Required for Docker daemon
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: ECR_REPO_URI_PARAM
+            Value: /qrcode/ecr/repo-uri
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-docker.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/qrcode-app-docker-push
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 9. CodePipeline — App Pipeline
+  #    Stages: Source → Build & Test → Docker & Push → Deploy (CodeDeploy)
+  # -------------------------------------------------------------------------
+  AppPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: qrcode-app-pipeline
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref AppArtifactBucket
+      Stages:
+
+        # ── Stage 1: Source ──────────────────────────────────────────────────
+        - Name: Source
+          Actions:
+            - Name: AppSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              Configuration:
+                RepositoryName: !Ref AppRepoName
+                BranchName: !Ref AppRepoBranch
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: AppSourceArtifact
+              RunOrder: 1
+
+        # ── Stage 2: Build & Test ─────────────────────────────────────────────
+        - Name: BuildAndTest
+          Actions:
+            - Name: BuildAndTest
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref AppTestProject
+              InputArtifacts:
+                - Name: AppSourceArtifact
+              OutputArtifacts:
+                - Name: AppTestedArtifact
+              RunOrder: 1
+
+        # ── Stage 3: Docker & Push ────────────────────────────────────────────
+        - Name: DockerAndPush
+          Actions:
+            - Name: DockerAndPush
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref AppDockerProject
+              InputArtifacts:
+                - Name: AppTestedArtifact
+              OutputArtifacts:
+                - Name: AppBuildArtifact
+              RunOrder: 1
+
+        # ── Stage 4: Deploy via CodeDeploy ───────────────────────────────────
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEC2
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: "1"
+              Configuration:
+                # These names are created by 03-compute.yml
+                ApplicationName: qrcode-app
+                DeploymentGroupName: qrcode-app-dg
+              InputArtifacts:
+                - Name: AppBuildArtifact
+              RunOrder: 1
+
+      Tags:
+        - Key: Project
+          Value: qrcode-python
+
+  # -------------------------------------------------------------------------
+  # 10. EventBridge Rules — trigger pipelines on CodeCommit push
+  # -------------------------------------------------------------------------
+  InfraPipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-infra-pipeline-trigger-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartInfraPipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:qrcode-infra-pipeline"
+
+  AppPipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: qrcode-app-pipeline-trigger-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartAppPipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:qrcode-app-pipeline"
+
+  InfraCommitTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: qrcode-infra-commit-trigger
+      Description: Triggers the infra pipeline on push to the infra repo main branch.
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !GetAtt InfraRepository.Arn
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref InfraRepoBranch
+      State: ENABLED
+      Targets:
+        - Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:qrcode-infra-pipeline"
+          Id: InfraPipelineTarget
+          RoleArn: !GetAtt InfraPipelineTriggerRole.Arn
+
+  AppCommitTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: qrcode-app-commit-trigger
+      Description: Triggers the app pipeline on push to the app repo main branch.
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !GetAtt AppRepository.Arn
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref AppRepoBranch
+      State: ENABLED
+      Targets:
+        - Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:qrcode-app-pipeline"
+          Id: AppPipelineTarget
+          RoleArn: !GetAtt AppPipelineTriggerRole.Arn
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  InfraRepoCloneUrlHttp:
+    Description: HTTP clone URL for the infra repository.
+    Value: !GetAtt InfraRepository.CloneUrlHttp
+    Export:
+      Name: qrcode-infra-repo-clone-url-http
+
+  AppRepoCloneUrlHttp:
+    Description: HTTP clone URL for the app repository.
+    Value: !GetAtt AppRepository.CloneUrlHttp
+    Export:
+      Name: qrcode-app-repo-clone-url-http
+
+  InfraArtifactBucketName:
+    Description: S3 bucket holding infra pipeline artifacts.
+    Value: !Ref InfraArtifactBucket
+    Export:
+      Name: qrcode-infra-artifact-bucket
+
+  AppArtifactBucketName:
+    Description: S3 bucket holding app pipeline artifacts.
+    Value: !Ref AppArtifactBucket
+    Export:
+      Name: qrcode-app-artifact-bucket
+
+  InfraPipelineUrl:
+    Description: Console URL for the infra pipeline.
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/qrcode-infra-pipeline/view"
+
+  AppPipelineUrl:
+    Description: Console URL for the app pipeline.
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/qrcode-app-pipeline/view"
+
+  CloudFormationDeployRoleArn:
+    Description: ARN of the IAM role used by CloudFormation during infra deployments.
+    Value: !GetAtt CloudFormationDeployRole.Arn
+    Export:
+      Name: qrcode-cfn-deploy-role-arn
