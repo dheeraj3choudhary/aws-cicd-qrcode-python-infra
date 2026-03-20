@@ -1,0 +1,52 @@
+version: 0.2
+
+env:
+  variables:
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONUNBUFFERED: "1"
+
+phases:
+
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "=== Installing dependencies ==="
+      - pip install --upgrade pip --quiet
+      - pip install -r requirements.txt --quiet
+
+  pre_build:
+    commands:
+      - echo "=== Environment ==="
+      - echo "Python $(python --version)"
+      - echo "Build ID $CODEBUILD_BUILD_ID"
+      - echo "Source Version $CODEBUILD_RESOLVED_SOURCE_VERSION"
+
+  build:
+    commands:
+      - echo "=== Running tests ==="
+      - PYTHONPATH=. pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=test-results.xml
+
+  post_build:
+    commands:
+      - |
+        if [ "${CODEBUILD_BUILD_SUCCEEDING}" -eq 1 ]; then
+          echo "=== All tests passed. ==="
+        else
+          echo "=== Tests FAILED. ==="
+        fi
+
+reports:
+  pytest-report:
+    files:
+      - test-results.xml
+    file-format: JUNITXML
+  coverage-report:
+    files:
+      - coverage.xml
+    file-format: COBERTURAXML
+
+artifacts:
+  files:
+    - "**/*"
+  base-directory: "."

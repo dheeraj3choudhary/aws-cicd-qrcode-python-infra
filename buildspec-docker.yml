@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+
+  pre_build:
+    commands:
+      - echo "=== Environment ==="
+      - echo "Build ID $CODEBUILD_BUILD_ID"
+      - echo "=== Fetching ECR repo URI from SSM ==="
+      - ECR_REPO_URI=$(aws ssm get-parameter --name /qrcode/ecr/repo-uri --query Parameter.Value --output text)
+      - echo "ECR Repo URI $ECR_REPO_URI"
+      - printf "ECR_REPO_URI=%s\nIMAGE_URI_LATEST=%s\n" "$ECR_REPO_URI" "${ECR_REPO_URI}:latest" > /tmp/build_env
+      - cat /tmp/build_env
+      - echo "=== Logging in to ECR ==="
+      - aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
+
+  build:
+    commands:
+      - . /tmp/build_env
+      - echo "=== Building Docker image ==="
+      - docker build -t ${IMAGE_URI_LATEST} .
+      - echo "=== Docker build complete ==="
+
+  post_build:
+    commands:
+      - . /tmp/build_env
+      - echo "=== Pushing Docker image to ECR ==="
+      - docker push ${IMAGE_URI_LATEST}
+      - echo "=== Push complete ==="
+      - echo "=== Writing imagedefinitions.json ==="
+      - printf '{"ImageURI":"%s"}' ${IMAGE_URI_LATEST} > imagedefinitions.json
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - appspec.yml
+    - imagedefinitions.json
+    - scripts/before_install.sh
+    - scripts/after_install.sh
+    - scripts/application_start.sh
+    - scripts/validate_service.sh
+  base-directory: "."

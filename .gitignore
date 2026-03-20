@@ -1,0 +1,135 @@
+# =============================================================================
+# aws-cicd-qrcode-python-app — .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OS
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# -----------------------------------------------------------------------------
+# IDE / Editors
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# -----------------------------------------------------------------------------
+# AWS credentials — never commit these
+# -----------------------------------------------------------------------------
+.aws/
+*.pem
+*.key
+credentials
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / packaging
+.eggs/
+*.egg-info/
+*.egg
+dist/
+build/
+wheels/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+*.cover
+coverage.xml
+nosetests.xml
+test-results/
+junit*.xml
+
+# mypy / type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# pyenv
+.python-version
+
+# Jupyter
+.ipynb_checkpoints/
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+# Never commit generated image tarballs or layer caches
+*.tar
+docker-compose.override.yml
+
+# -----------------------------------------------------------------------------
+# QR Code output artefacts (generated at runtime, not source)
+# -----------------------------------------------------------------------------
+*.png
+*.svg
+qrcodes/
+output/
+generated/
+
+# -----------------------------------------------------------------------------
+# CodeDeploy / CodeBuild local output
+# -----------------------------------------------------------------------------
+appspec-local/
+deployment-archive/
+*.zip
+
+# -----------------------------------------------------------------------------
+# Secrets & environment files
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.secret
+secrets.yml
+secrets.yaml
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+*.log
+logs/
+
+# -----------------------------------------------------------------------------
+# Node (guard against accidental npm init)
+# -----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
