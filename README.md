@@ -1,4 +1,10 @@
-# aws-cicd-qrcode-python-infra
+<div align="center">
+
+# AWS QR Code Python Application Infra Pipeline
+Infrastructure-as-code repository for the **QR Code Generator** project. Contains the bootstrap CloudFormation template, all infrastructure stacks, and the teardown script.
+
+<img width="1280" height="720" alt="AWS_CICD_Series (9)" src="https://github.com/user-attachments/assets/21e58cdf-56bd-4175-9de6-5d6fcea3f446" />
+
 
 ![Infra Pipeline](https://img.shields.io/badge/pipeline-infra-blue?style=flat-square&logo=amazonaws)
 ![IaC](https://img.shields.io/badge/IaC-CloudFormation-orange?style=flat-square&logo=amazonaws)
@@ -6,7 +12,24 @@
 ![Deploy Target](https://img.shields.io/badge/deploy-EC2-yellow?style=flat-square&logo=amazonaws)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-Infrastructure-as-code repository for the **QR Code Generator** project. Contains the bootstrap CloudFormation template, all infrastructure stacks, and the teardown script.
+
+<a href="https://www.buymeacoffee.com/Dheeraj3" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me A Coffee" height="50">
+</a>
+
+## [Subscribe](https://www.youtube.com/@dheeraj-choudhary?sub_confirmation=1) to learn more About Artificial-Intellegence, Machine-Learning, Cloud & DevOps.
+
+<p align="center">
+<a href="https://www.linkedin.com/in/dheeraj-choudhary/" target="_blank">
+  <img height="100" alt="Dheeraj Choudhary | LinkedIN"  src="https://user-images.githubusercontent.com/60597290/152035581-a7c6c0c3-65c3-4160-89c0-e90ddc1e8d4e.png"/>
+</a> 
+
+<a href="https://www.youtube.com/@dheeraj-choudhary?sub_confirmation=1">
+    <img height="100" src="https://user-images.githubusercontent.com/60597290/152035929-b7f75d38-e1c2-4325-a97e-7b934b8534e2.png" />
+</a>    
+</p>
+
+</div>
 
 ---
 
