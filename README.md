@@ -54,42 +54,6 @@ aws-cicd-qrcode-python-infra/
 
 ---
 
-## Architecture Overview
-
-```
-                          ┌─────────────────────────────────────────────┐
-                          │              Bootstrap Stack                 │
-                          │  (deployed once manually from AWS Console)   │
-                          │                                              │
-                          │  - CodeCommit: infra repo + app repo         │
-                          │  - S3: infra artifact bucket                 │
-                          │  - S3: app artifact bucket                   │
-                          │  - IAM: pipeline + build + CFN deploy roles  │
-                          │  - CodeBuild: validate + test + docker       │
-                          │  - CodePipeline: infra pipeline              │
-                          │  - CodePipeline: app pipeline                │
-                          │  - EventBridge: commit triggers              │
-                          └───────────────┬─────────────────────────────┘
-                                          │ push to main
-                                          ▼
-                          ┌──────────────────────────────┐
-                          │       Infra Pipeline          │
-                          │                              │
-                          │  Source (CodeCommit)         │
-                          │    ↓                         │
-                          │  Validate (cfn-lint + API)   │
-                          │    ↓                         │
-                          │  Deploy (all stacks)         │
-                          │    RunOrder 1: 01-iam        │
-                          │    RunOrder 2: 02-networking  │
-                          │    RunOrder 3: 04-ecr-s3     │
-                          │    RunOrder 4: 03-compute    │
-                          │    RunOrder 5: 05-monitoring │
-                          └──────────────────────────────┘
-```
-
----
-
 ## Stacks
 
 | Order | Stack Name | Template | Description |
@@ -230,4 +194,4 @@ git push origin main
 
 | Repo | Description |
 |------|-------------|
-| [`aws-cicd-qrcode-python-app`](https://git-codecommit.<region>.amazonaws.com/v1/repos/aws-cicd-qrcode-python-app) | Python QR Code app, Docker, CodeDeploy scripts, app pipeline |
+| [`aws-cicd-qrcode-python-app`](https://github.com/dheeraj3choudhary/aws-cicd-qrcode-python-app) | Python QR Code app, Docker, CodeDeploy scripts, app pipeline |
