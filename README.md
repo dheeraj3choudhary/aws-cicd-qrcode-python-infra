@@ -3,8 +3,7 @@
 # AWS QR Code Python Application Infra Pipeline
 Infrastructure-as-code repository for the **QR Code Generator** project. Contains the bootstrap CloudFormation template, all infrastructure stacks, and the teardown script.
 
-<img width="1280" height="720" alt="AWS_CICD_Series (9)" src="https://github.com/user-attachments/assets/21e58cdf-56bd-4175-9de6-5d6fcea3f446" />
-
+<img width="1280" height="720" alt="AWS_CICD_Series (9)" src="https://github.com/user-attachments/assets/d408197b-664b-43fd-bb61-73bf91fb2707" />
 
 ![Infra Pipeline](https://img.shields.io/badge/pipeline-infra-blue?style=flat-square&logo=amazonaws)
 ![IaC](https://img.shields.io/badge/IaC-CloudFormation-orange?style=flat-square&logo=amazonaws)
